@@ -1,0 +1,64 @@
+name: Build hexo website
+on:
+  push:
+    branches:
+      - dev
+      - master
+jobs:
+  hexo-build:
+    runs-on: ubuntu-20.04
+    steps:
+      - name: Clone blog source repository
+        uses: actions/checkout@v2
+        with:
+          submodules: 'true'
+          path: hexo
+
+      - name: Checkout blog web site repo
+        uses: actions/checkout@v2
+        with:
+          token: ${{ secrets.TOKEN_GITHUB }}
+          fetch-depth: 0
+          repository: ${{ github.repository_owner }}/blog.k8s.li
+          path: site
+
+      - name: Config git user and user.email
+        working-directory: site
+        run: |
+          git config user.name github-actions
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+
+      - name: Init hexo build env
+        working-directory: hexo
+        run: |
+          sudo apt install rename -y -qq
+          sudo yarn global add hexo-cli
+          yarn install
+          rm README.md
+
+      - name: Hexo build
+        working-directory: hexo
+        run: |
+          docker run -v $PWD:$PWD --rm elliotxx/mdfmt:v0.4.1 mdfmt -l -w $PWD/source
+          rename 's/([12]\d{3}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])-)//' source/_posts/*.md
+          hexo clean
+          hexo g
+          sed -i '/muzi.disqus.com/d' public/index.html
+
+      - name: Update repo
+        working-directory: site
+        run: |
+          cp -rf ${GITHUB_WORKSPACE}/hexo/public/* .
+          git add .
+          git commit -am "Auto build by GitHub Actions $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          git push origin -f
+
+  update-site:
+    needs: hexo-build
+    runs-on: [self-hosted, Linux]
+    steps:
+      - name: Update website
+        run: |
+          cd /var/www/blog.k8s.li
+          git fetch --all
+          git reset --hard origin/master
